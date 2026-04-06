@@ -42,6 +42,8 @@ All2AllBackend = Literal[
     "pplx",
     "deepep_high_throughput",
     "deepep_low_latency",
+    "ucclep_high_throughput",
+    "ucclep_low_latency",
     "mori",
     "nixl_ep",
     "allgather_reducescatter",
@@ -615,6 +617,8 @@ class ParallelConfig:
                 "allgather_reducescatter",
                 "deepep_high_throughput",
                 "deepep_low_latency",
+                "ucclep_high_throughput",
+                "ucclep_low_latency",
                 "mori",
                 "nixl_ep",
             )
