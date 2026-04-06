@@ -1,13 +1,55 @@
+from collections.abc import Callable
+
 import uccl.ep
 import torch
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
+from vllm import envs
 from vllm.logger import init_logger
+from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+    TopKWeightAndReduceDelegate,
+)
+from vllm.model_executor.layers.fused_moe.utils import (
+    moe_kernel_quantize_input,
+    normalize_batched_scales_shape,
+)
+from vllm.platforms import current_platform
+from vllm.v1.worker.ubatching import (
+    dbo_current_ubatch_id,
+    dbo_enabled,
+    dbo_maybe_run_recv_hook,
+)
 
 logger = init_logger(__name__)
 
+# UCCL EP, like DeepEP has kernels that quantize dispatch inputs in 128 element chunks.
+UCCL_EP_QUANT_BLOCK_SIZE = 128
+UCCL_EP_QUANT_BLOCK_SHAPE = [UCCL_EP_QUANT_BLOCK_SIZE, UCCL_EP_QUANT_BLOCK_SIZE]
+
+logger = init_logger(__name__)
+
+def dequant_fp8(
+    expert_x_fp8: torch.Tensor, expert_x_scales: torch.Tensor
+) -> torch.Tensor:
+    """
+    Return dequantized tensor in fp32
+    """
+    # TODO (varun) : Optimize leverage num_tokens_per_expert counts
+    assert expert_x_fp8.is_contiguous()
+    expert_x_scales = expert_x_scales.contiguous()
+    num_experts = expert_x_fp8.size(0)
+
+    expert_x_fp32 = expert_x_fp8.to(torch.float32).view(
+        num_experts, -1, UCCL_EP_QUANT_BLOCK_SIZE
+    )
+    expert_x_scales = expert_x_scales.view(num_experts, -1, 1)
+    return (expert_x_fp32 * expert_x_scales).view(expert_x_fp8.size())
+
 class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
-    # TODO(Shawn): Verify that this is the same
+    """
+    Prepare/Finalize using UCCL EP low-latency kernels
+    """
     SUPPORTED_HIDDEN_SIZES = [2048, 2560, 3072, 4096, 5120, 6144, 7168, 8192]
 
     @staticmethod
@@ -34,7 +76,7 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def __init__(
         self,
-        buffer: deep_ep.Buffer,
+        buffer: uccl.ep.Buffer,
         max_tokens_per_rank: int,
         num_dispatchers: int,
         use_fp8_dispatch: bool = False,
@@ -108,7 +150,6 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
             return topk_ids
         return self.global_to_physical[topk_ids]
 
-    # TODO(Shawn): Not sure if these quantization fields are needed, but will keep them here for now
     def _do_quant(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
@@ -121,7 +162,7 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 if quant_config.block_shape is not None
                 else None
             )
-            if block_k == DEEPEP_QUANT_BLOCK_SIZE:
+            if block_k == UCCL_EP_QUANT_BLOCK_SIZE:
                 # DeepEP kernels did the quantization for us.
                 x, x_scales = x
                 return x, x_scales
@@ -133,43 +174,22 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         assert isinstance(x, (torch.Tensor, tuple))
         q_dtype = quant_config.quant_dtype
 
-        if q_dtype == "nvfp4" and envs.VLLM_DEEPEPLL_NVFP4_DISPATCH:
-            logger.info_once(
-                "Since VLLM_DEEPEPLL_NVFP4_DISPATCH==1, make sure "
-                "using the hybrid-ep branch of DeepEP"
-                "(https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep)"
-            )
-            assert isinstance(x, tuple)
-            x_scales = x[1]
-            x = x[0].permute(2, 0, 1)
-            num_experts, max_tokens, hidden_dim_by_2 = x.shape
-            hidden_dim = hidden_dim_by_2 * 2
-            logger.info_once(
-                "Quantization is fused with DeepEP nvfp4 dispatch for "
-                "FlashInfer CUTEDSL as VLLM_DEEPEPLL_NVFP4_DISPATCH==1"
-            )
-        else:
-            if q_dtype == "nvfp4":
-                q_dtype = None
-                logger.info_once(
-                    "Using DeepEP bfloat16 dispatch for FlashInfer CUTEDSL as "
-                    "VLLM_DEEPEPLL_NVFP4_DISPATCH==0"
-                )
-            assert isinstance(x, torch.Tensor)
-            num_experts, max_tokens, hidden_dim = x.size()
+        # NOTE: removed mentions of nvfp4 support as UCCL does not support it for now
+        assert isinstance(x, torch.Tensor)
+        num_experts, max_tokens, hidden_dim = x.size()
 
-            # TODO (varun): Optimization - Use a batched version of quant
-            x = x.view((-1, hidden_dim))
-            x, x_scales = moe_kernel_quantize_input(
-                x,
-                quant_config.a1_scale,
-                q_dtype,
-                quant_config.per_act_token_quant,
-                quant_config.block_shape,
-            )
-            x = x.view((num_experts, -1, hidden_dim))
+        # TODO (varun): Optimization - Use a batched version of quant
+        x = x.view((-1, hidden_dim))
+        x, x_scales = moe_kernel_quantize_input(
+            x,
+            quant_config.a1_scale,
+            q_dtype,
+            quant_config.per_act_token_quant,
+            quant_config.block_shape,
+        )
+        x = x.view((num_experts, -1, hidden_dim))
 
-        if q_dtype is not None and q_dtype != "nvfp4":
+        if q_dtype is not None:
             assert x_scales is not None
             x_scales = normalize_batched_scales_shape(x_scales, num_experts)
 
@@ -208,12 +228,6 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 "DeepEP kernels quantize the inputs in blocks of shape 128"
             )
 
-        use_nvfp4 = False
-        nvfp4_dispatch = (
-            quant_config.quant_dtype == "nvfp4" and envs.VLLM_DEEPEPLL_NVFP4_DISPATCH
-        )
-        if nvfp4_dispatch:
-            use_nvfp4 = True
         qc_a1_gscale_or_scale = (
             quant_config.a1_gscale if nvfp4_dispatch else quant_config.a1_scale
         )
@@ -226,10 +240,9 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 else False
             )
         )
-        if not use_nvfp4:
-            assert not has_per_token_scales, (
-                "low_latency kernels doesn't support dispatching per-token scales"
-            )
+        assert not has_per_token_scales, (
+            "low_latency kernels doesn't support dispatching per-token scales"
+        )
 
         if apply_router_weight_on_input:
             topk = topk_ids.size(1)
@@ -272,12 +285,6 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 use_fp8=self.use_fp8_dispatch,
                 round_scale=self.use_ue8m0_dispatch,
                 use_ue8m0=self.use_ue8m0_dispatch,
-                **(dict(use_nvfp4=True) if use_nvfp4 else dict()),
-                **(
-                    dict(x_global_scale=qc_a1_gscale_or_scale)
-                    if qc_a1_gscale_or_scale is not None and nvfp4_dispatch
-                    else dict()
-                ),
                 async_finish=False,
                 return_recv_hook=True,
             )
