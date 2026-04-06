@@ -17,6 +17,7 @@ def override_envs_for_eplb(parallel_config: ParallelConfig) -> None:
     Args:
         parallel_config: The parallel configuration object.
     """
+    # TODO(Shawn): Include a check for UCCL here?
     is_data_parallel = parallel_config.data_parallel_size > 1
     is_eplb_enabled = parallel_config.enable_eplb
     async_eplb = parallel_config.eplb_config.use_async

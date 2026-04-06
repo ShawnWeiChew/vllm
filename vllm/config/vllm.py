@@ -1188,6 +1188,7 @@ class VllmConfig:
                 scope="local",
             )
 
+        # TODO(Shawn): Not sure if uBatching has to be configured for UCCL as well?
         if self.parallel_config.use_ubatching:
             a2a_backend = self.parallel_config.all2all_backend
             assert a2a_backend in [
