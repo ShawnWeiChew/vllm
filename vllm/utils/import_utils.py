@@ -407,6 +407,11 @@ def has_deep_ep() -> bool:
     return _has_module("deep_ep")
 
 
+def has_uccl_ep() -> bool:
+    """Whether the optional `uccl` package is available"""
+    return _has_module("uccl.ep")
+
+
 def has_deep_gemm() -> bool:
     """Whether the optional `deep_gemm` package is available.
 

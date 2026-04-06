@@ -15,7 +15,7 @@ from vllm.utils.flashinfer import (
     has_flashinfer_nvlink_one_sided,
     has_flashinfer_nvlink_two_sided,
 )
-from vllm.utils.import_utils import has_deep_ep, has_mori
+from vllm.utils.import_utils import has_deep_ep, has_mori, has_uccl_ep
 
 from .base_device_communicator import All2AllManagerBase, Cache
 
@@ -436,6 +436,218 @@ class DeepEPLLAll2AllManager(DeepEPAll2AllManagerBase):
         return handle
 
     # DeepEP LL uses RDMA so no SMs are used for communication
+    def max_sms_used(self) -> int | None:
+        return 0
+
+
+class UCCLEPAll2AllManagerBase(All2AllManagerBase):
+    """
+    All2All communication based on UCCL EP High-Throughput kernels.
+    """
+
+    def __init__(self, cpu_group, tcp_store_group=None):
+        assert has_uccl_ep(), "UCCL EP kernels not found."  # noqa
+        super().__init__(cpu_group, tcp_store_group)
+        self.handle_cache = Cache()
+
+        # TODO(Shawn): Based on the testing configuration,
+        # there should be 24 SMs, not 20
+        self.num_sms = 20
+
+    def get_handle(self, kwargs):
+        raise NotImplementedError
+
+    def dispatch_router_logits(
+        self,
+        hidden_states: torch.Tensor,
+        router_logits: torch.Tensor,
+        is_sequence_parallel: bool = False,
+        extra_tensors: list[torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+    def dispatch(
+        self,
+        hidden_states: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        is_sequence_parallel: bool = False,
+        extra_tensors: list[torch.Tensor] | None = None,
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[torch.Tensor]]
+    ):
+        raise NotImplementedError
+
+    def combine(
+        self, hidden_states: torch.Tensor, is_sequence_parallel: bool = False
+    ) -> torch.Tensor:
+        raise NotImplementedError
+
+    def destroy(self):
+        with self.handle_cache._lock:
+            for _, handle in self.handle_cache._cache.items():
+                handle.destroy()
+            self.handle_cache._cache.clear()
+
+
+class UCCLEPHTAll2AllManager(UCCLEPAll2AllManagerBase):
+    """
+    All2All communication based on UCCL EP High-Throughput kernels.
+    """
+
+    def __init__(self, cpu_group, tcp_store_group=None):
+        super().__init__(cpu_group, tcp_store_group)
+
+    def _align_buffer(
+        self, size: int, margin: float = 1.2, alignment: int = 128
+    ) -> int:
+        """Apply safety margin and align to NUM_BUFFER_ALIGNMENT_BYTES."""
+        return ((int(size * margin) + alignment - 1) // alignment) * alignment
+
+    def _make_all2all_kwargs(self) -> dict[Any, Any]:
+        # try to dynamically extract the state of the current model to
+        # preserve the same function signature
+
+        import uccl.ep
+
+        from vllm.config import get_current_vllm_config
+
+        num_max_nvl_chunked_send_tokens = 8
+        num_max_nvl_chunked_recv_tokens = 512
+        num_max_rdma_chunked_send_tokens = 16
+        num_max_rdma_chunked_recv_tokens = 512
+
+        config = uccl.ep.Config(
+            self.num_sms,
+            num_max_nvl_chunked_send_tokens,
+            num_max_nvl_chunked_recv_tokens,
+            num_max_rdma_chunked_send_tokens,
+            num_max_rdma_chunked_recv_tokens,
+        )
+
+        # TODO(Shawn): these settings are currently configured for UCCL EP internode
+        num_rdma_bytes = 0
+        num_qps_per_rank = 1
+        is_intranode = True
+
+        if self.internode:
+            hidden_size = get_current_vllm_config().model_config.get_hidden_size()
+            hidden_bytes = hidden_size * 2  # BF16
+            num_nvl_bytes = self._align_buffer(
+                config.get_nvl_buffer_size_hint(hidden_bytes, self.world_size)
+            )
+            num_rdma_bytes = self._align_buffer(
+                config.get_rdma_buffer_size_hint(hidden_bytes, self.world_size)
+            )
+            num_qps_per_rank = self.num_sms
+            is_intranode = False
+
+        assert num_rdma_bytes is not None
+        assert num_qps_per_rank is not None
+        kwargs = dict(
+            group=self.cpu_group,
+            num_nvl_bytes=num_nvl_bytes,
+            num_rdma_bytes=num_rdma_bytes,
+            low_latency_mode=False,
+            num_qps_per_rank=num_qps_per_rank,
+            explicitly_destroy=True,
+            is_intranode=is_intranode,
+        )
+
+        return kwargs
+
+    def get_handle(self, kwargs):
+        assert len(kwargs) == 0, (
+            "UCCLEPHTAll2AllManager expects no arguments. All the required "
+            "args are computed in the Manager itself."
+        )
+
+        import uccl.ep  # type: ignore[import-not-found]
+
+        buffer_kwargs = self._make_all2all_kwargs()
+        logger.debug("UCCL EP all2all args %s", buffer_kwargs)
+        handle: uccl.ep.Buffer = self.handle_cache.get_or_create(
+            buffer_kwargs, uccl.ep.Buffer
+        )
+        return handle
+
+    def set_num_sms(self, num_sms: int):
+        import uccl.ep  # type: ignore[import-not-found]
+
+        # Right now the buffers are sized for only what the kernels were
+        # created with. So we can only reduce the number of SMS used
+        # but not increase it.
+        if num_sms > self.num_sms:
+            num_sms = self.num_sms
+        uccl.ep.Buffer.set_num_sms(num_sms)
+
+
+class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
+    """
+    All2All communication based on UCCLEP Low-Latency kernels.
+    """
+
+    def __init__(self, cpu_group, tcp_store_group=None):
+        super().__init__(cpu_group, tcp_store_group)
+
+    def _make_all2all_kwargs(
+        self,
+        max_num_tokens_per_dp_rank: int,
+        token_hidden_size: int,
+        num_ep_ranks: int,
+        num_global_experts: int,
+        num_local_experts: int,
+    ) -> dict[Any, Any]:
+        """
+        max_num_tokens_per_dp_rank : the maximum number of tokens a DP rank
+          can dispatch all the ranks must hold the same value.
+        token_hidden_size: the hidden dimension of each token.
+        num_ep_ranks: the number of EP group ranks.
+        num_global_experts: Number of experts in the model.
+        num_local_experts: Number of experts in an EP rank.
+        """
+        import uccl.ep  # type: ignore[import-not-found]
+
+        # TODO: Check configuration
+        num_qps_per_rank = num_local_experts
+        num_rdma_bytes = uccl.ep.Buffer.get_low_latency_rdma_size_hint(
+            num_max_dispatch_tokens_per_rank=max_num_tokens_per_dp_rank,
+            hidden=token_hidden_size,
+            num_ranks=num_ep_ranks,
+            num_experts=num_global_experts,
+        )
+
+        assert num_rdma_bytes is not None
+
+        kwargs = dict(
+            group=self.cpu_group,
+            num_rdma_bytes=num_rdma_bytes,
+            low_latency_mode=True,
+            num_qps_per_rank=num_qps_per_rank,
+            allow_nvlink_for_low_latency_mode=True,
+            allow_mnnvl=envs.VLLM_UCCLEP_LOW_LATENCY_USE_MNNVL,
+            explicitly_destroy=True,
+        )
+
+        return kwargs
+
+    def get_handle(self, kwargs):
+        """
+        The kwargs for UCCLEPLLAll2AllManager is dictated by
+        _make_all2all_kwargs.
+        """
+        import uccl.ep  # type: ignore[import-not-found]
+
+        buffer_kwargs = self._make_all2all_kwargs(**kwargs)
+        logger.debug("UCCL EP all2all args %s", buffer_kwargs)
+        handle: uccl.ep.Buffer = self.handle_cache.get_or_create(
+            buffer_kwargs, uccl.ep.Buffer
+        )
+        return handle
+
+    # TODO (Shawn): I should probably revisit this
+    # UCCL EP LL uses RDMA so no SMs are used for communication
     def max_sms_used(self) -> int | None:
         return 0
 
