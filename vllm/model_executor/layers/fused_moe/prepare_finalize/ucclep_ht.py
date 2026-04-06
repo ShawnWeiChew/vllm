@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from collections.abc import Callable
 
 import uccl.ep
@@ -46,7 +48,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def __init__(
         self,
-        buffer: deep_ep.Buffer,
+        buffer: uccl.ep.Buffer,
         num_dispatchers: int,
         dp_size: int,
         rank_expert_offset: int,
@@ -63,8 +65,8 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         # micro-batch to avoid races between threads.
         self.handles = [None, None]
 
-        # From https://github.com/deepseek-ai/UCCLEP/blob/9fe9021f29c9083cd1808ab36b740208524d9f63/deep_ep/buffer.py#L164
-        self.available_rank_configs = [2, 4, 8, 16, 24, 32, 64, 128, 144, 160]
+        # From https://github.com/uccl-project/uccl/blob/e65c7866061e74a00e93f13437359c3f1dc14a43/ep/include/ep_launch.cuh#L78
+        self.available_rank_configs = [2, 4, 8, 16, 24, 32, 64, 128]
 
     def num_dispatchers(self) -> int:
         return self.num_dispatchers_
@@ -82,15 +84,15 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
     def topk_indices_dtype(self) -> torch.dtype | None:
         return torch.int64
 
-    def _get_dispatch_config(self) -> deep_ep.Config | None:
+    def _get_dispatch_config(self) -> uccl.ep.Config | None:
         if self.num_dispatchers_ not in self.available_rank_configs:
             return None
-        return deep_ep.Buffer.get_dispatch_config(self.num_dispatchers_)
+        return uccl.ep.Buffer.get_dispatch_config(self.num_dispatchers_)
 
-    def _get_combine_config(self) -> deep_ep.Config | None:
+    def _get_combine_config(self) -> uccl.ep.Config | None:
         if self.num_dispatchers_ not in self.available_rank_configs:
             return None
-        return deep_ep.Buffer.get_combine_config(self.num_dispatchers_)
+        return uccl.ep.Buffer.get_combine_config(self.num_dispatchers_)
 
     def _do_dispatch(
         self,
@@ -180,7 +182,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def _receiver(
         self,
-        event: deep_ep.EventOverlap,
+        event: uccl.ep.EventOverlap,
         has_scales: bool,
         token_data: tuple[torch.Tensor, torch.Tensor] | torch.Tensor,
         expert_topk_ids: torch.Tensor | None,
@@ -291,11 +293,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         else:
             a1q = a1
             a1q_scale = None
-            a1_post_scale = (
-                quant_config.a1_gscale
-                if quant_config.quant_dtype == "nvfp4"
-                else quant_config.a1_scale
-            )
+            a1_post_scale = quant_config.a1_scale
 
         return self._do_dispatch(
             tokens=a1q,
