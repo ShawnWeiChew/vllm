@@ -1130,6 +1130,19 @@ class CompilationConfig:
                 "deepep_low_latency or allgather_reducescatter."
             )
             self.cudagraph_mode = CUDAGraphMode.NONE
+        elif (
+            all2all_backend == "ucclep_high_throughput"
+            and data_parallel_size > 1
+            and self.cudagraph_mode != CUDAGraphMode.NONE
+        ):
+            logger.info(
+                "UCCL EP: Disabling CUDA Graphs since UCCL EP high-throughput kernels "
+                "are optimized for prefill and are incompatible with CUDA Graphs. "
+                "In order to use CUDA Graphs for decode-optimized workloads, "
+                "use --all2all-backend with another option, such as "
+                "ucclep_low_latency or allgather_reducescatter."
+            )
+            self.cudagraph_mode = CUDAGraphMode.NONE
 
     def set_splitting_ops_for_attn_fusion(self):
         assert self.pass_config.fuse_attn_quant

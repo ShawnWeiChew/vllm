@@ -966,6 +966,17 @@ class FusedMoEParallelConfig:
         return self.use_all2all_kernels and self.all2all_backend == "deepep_low_latency"
 
     @property
+    def use_ucclep_ht_kernels(self):
+        return (
+            self.use_all2all_kernels
+            and self.all2all_backend == "ucclep_high_throughput"
+        )
+
+    @property
+    def use_ucclep_ll_kernels(self):
+        return self.use_all2all_kernels and self.all2all_backend == "ucclep_low_latency"
+
+    @property
     def use_fi_nvl_two_sided_kernels(self):
         return self.use_all2all_kernels and (
             self.all2all_backend == "flashinfer_all2allv"
@@ -1264,6 +1275,14 @@ class FusedMoEConfig:
     @property
     def use_deepep_ll_kernels(self):
         return self.moe_parallel_config.use_deepep_ll_kernels
+
+    @property
+    def use_ucclep_ht_kernels(self):
+        return self.moe_parallel_config.use_ucclep_ht_kernels
+
+    @property
+    def use_ucclep_ll_kernels(self):
+        return self.moe_parallel_config.use_ucclep_ll_kernels
 
     @property
     def use_mori_kernels(self):
