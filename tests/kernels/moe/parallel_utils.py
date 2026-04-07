@@ -15,7 +15,7 @@ from torch.distributed import ProcessGroup
 from torch.multiprocessing import spawn  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import ParamSpec
 
-from vllm.utils.import_utils import has_deep_ep
+from vllm.utils.import_utils import has_deep_ep, has_uccl_ep
 from vllm.utils.network_utils import get_open_port
 
 if has_deep_ep():
@@ -200,3 +200,99 @@ def make_deepep_a2a(
 
     assert deepep_ll_args is not None
     return make_deepep_ll_a2a(pg, pgi, deepep_ll_args, q_dtype, block_shape)
+
+if has_uccl_ep():
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ht import UCCLEPHTPrepareAndFinalize
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ll import UCCLEPLLPrepareAndFinalize
+
+# UCCL EP specific units
+@dataclasses.dataclass
+class UCCLEPHTArgs:
+    num_local_experts: int
+
+
+@dataclasses.dataclass
+class UCCLEPLLArgs:
+    max_tokens_per_rank: int
+    hidden_size: int
+    num_experts: int
+    use_fp8_dispatch: bool
+
+
+def make_ucclep_ht_a2a(
+    pg: ProcessGroup,
+    pgi: ProcessGroupInfo,
+    dp_size: int,
+    ht_args: UCCLEPHTArgs,
+    q_dtype: torch.dtype | None = None,
+    block_shape: list[int] | None = None,
+):
+    import uccl.ep
+
+    # high throughput a2a
+    num_nvl_bytes = 1024 * 1024 * 1024  # 1GB
+    num_rdma_bytes, low_latency_mode, num_qps_per_rank = 0, False, 1
+    buffer = uccl.ep.Buffer(
+        group=pg,
+        num_nvl_bytes=num_nvl_bytes,
+        num_rdma_bytes=num_rdma_bytes,
+        low_latency_mode=low_latency_mode,
+        num_qps_per_rank=num_qps_per_rank,
+    )
+    return UCCLEPHTPrepareAndFinalize(
+        buffer=buffer,
+        num_dispatchers=pgi.world_size,
+        dp_size=dp_size,
+        rank_expert_offset=pgi.rank * ht_args.num_local_experts,
+    )
+
+
+def make_ucclep_ll_a2a(
+    pg: ProcessGroup,
+    pgi: ProcessGroupInfo,
+    ucclep_ll_args: UCCLEPLLArgs,
+    q_dtype: torch.dtype | None = None,
+    block_shape: list[int] | None = None,
+):
+    import uccl.ep
+
+    # low-latency a2a
+    num_rdma_bytes = uccl.ep.Buffer.get_low_latency_rdma_size_hint(
+        ucclep_ll_args.max_tokens_per_rank,
+        ucclep_ll_args.hidden_size,
+        pgi.world_size,
+        ucclep_ll_args.num_experts,
+    )
+
+    buffer = uccl.ep.Buffer(
+        group=pg,
+        num_rdma_bytes=num_rdma_bytes,
+        low_latency_mode=True,
+        num_qps_per_rank=ucclep_ll_args.num_experts // pgi.world_size,
+    )
+
+    return UCCLEPLLPrepareAndFinalize(
+        buffer=buffer,
+        num_dispatchers=pgi.world_size,
+        max_tokens_per_rank=ucclep_ll_args.max_tokens_per_rank,
+        use_fp8_dispatch=ucclep_ll_args.use_fp8_dispatch,
+    )
+
+
+def make_ucclep_a2a(
+    pg: ProcessGroup,
+    pgi: ProcessGroupInfo,
+    dp_size: int,
+    ucclep_ht_args: UCCLEPHTArgs | None,
+    ucclep_ll_args: UCCLEPLLArgs | None,
+    q_dtype: torch.dtype | None = None,
+    block_shape: list[int] | None = None,
+):
+    if ucclep_ht_args is not None:
+        assert ucclep_ll_args is None
+        return make_ucclep_ht_a2a(
+            pg, pgi, dp_size, ucclep_ht_args, q_dtype, block_shape
+        )
+
+    assert ucclep_ll_args is not None
+    return make_ucclep_ll_a2a(pg, pgi, ucclep_ll_args, q_dtype, block_shape)
