@@ -450,11 +450,7 @@ class UCCLEPAll2AllManagerBase(All2AllManagerBase):
         super().__init__(cpu_group, tcp_store_group)
         self.handle_cache = Cache()
 
-        # TODO(Shawn): Not sure what the right number of SMs should be
-        # Buffer.py has 20, while test_internode has 24
-        # I am going to set it to 24 for now, so that test_internode has
-        # more consistency
-        self.num_sms = 24
+        self.num_sms = 20
 
     def get_handle(self, kwargs):
         raise NotImplementedError
