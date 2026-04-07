@@ -201,9 +201,15 @@ def make_deepep_a2a(
     assert deepep_ll_args is not None
     return make_deepep_ll_a2a(pg, pgi, deepep_ll_args, q_dtype, block_shape)
 
+
 if has_uccl_ep():
-    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ht import UCCLEPHTPrepareAndFinalize
-    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ll import UCCLEPLLPrepareAndFinalize
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ht import (
+        UCCLEPHTPrepareAndFinalize,
+    )
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ll import (
+        UCCLEPLLPrepareAndFinalize,
+    )
+
 
 # UCCL EP specific units
 @dataclasses.dataclass

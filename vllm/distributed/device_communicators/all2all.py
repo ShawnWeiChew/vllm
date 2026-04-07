@@ -439,21 +439,21 @@ class DeepEPLLAll2AllManager(DeepEPAll2AllManagerBase):
     def max_sms_used(self) -> int | None:
         return 0
 
+
 class UCCLEPAll2AllManagerBase(All2AllManagerBase):
     """
     All2All communication based on UCCL EP High-Throughput kernels.
     """
 
     def __init__(self, cpu_group, tcp_store_group=None):
-        assert has_uccl_ep(), (
-            "UCCL EP kernels not found."
-        )  # noqa
+        assert has_uccl_ep(), "UCCL EP kernels not found."  # noqa
         super().__init__(cpu_group, tcp_store_group)
         self.handle_cache = Cache()
 
         # TODO(Shawn): Not sure what the right number of SMs should be
         # Buffer.py has 20, while test_internode has 24
-        # I am going to set it to 24 for now, so that test_internode has more consistency
+        # I am going to set it to 24 for now, so that test_internode has
+        # more consistency
         self.num_sms = 24
 
     def get_handle(self, kwargs):
@@ -501,25 +501,35 @@ class UCCLEPHTAll2AllManager(UCCLEPAll2AllManagerBase):
     def __init__(self, cpu_group, tcp_store_group=None):
         super().__init__(cpu_group, tcp_store_group)
 
-    def _align_buffer(self, size: int, margin: float = 1.2, alignment: int = 128) -> int:
+    def _align_buffer(
+        self, size: int, margin: float = 1.2, alignment: int = 128
+    ) -> int:
         """Apply safety margin and align to NUM_BUFFER_ALIGNMENT_BYTES."""
         return ((int(size * margin) + alignment - 1) // alignment) * alignment
 
     def _make_all2all_kwargs(self) -> dict[Any, Any]:
-        # try to dynamically extract the state of the current model to preserve the same function signature
+        # try to dynamically extract the state of the current model to
+        # preserve the same function signature
+
+        import uccl.ep
 
         from vllm.config import get_current_vllm_config
-        import uccl.ep
 
         num_max_nvl_chunked_send_tokens = 8
         num_max_nvl_chunked_recv_tokens = 512
         num_max_rdma_chunked_send_tokens = 16
-        num_max_rdma_chunked_recv_tokens =  512
+        num_max_rdma_chunked_recv_tokens = 512
 
-        config = uccl.ep.Config(self.num_sms, num_max_nvl_chunked_send_tokens, num_max_nvl_chunked_recv_tokens, num_max_rdma_chunked_send_tokens, num_max_rdma_chunked_recv_tokens)
+        config = uccl.ep.Config(
+            self.num_sms,
+            num_max_nvl_chunked_send_tokens,
+            num_max_nvl_chunked_recv_tokens,
+            num_max_rdma_chunked_send_tokens,
+            num_max_rdma_chunked_recv_tokens,
+        )
 
         hidden_size = get_current_vllm_config().model_config.get_hidden_size()
-        hidden_bytes = hidden_size * 2 # BF16
+        hidden_bytes = hidden_size * 2  # BF16
         num_nvl_bytes = self._align_buffer(
             config.get_nvl_buffer_size_hint(hidden_bytes, self.world_size)
         )
@@ -617,7 +627,7 @@ class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
         )
 
         assert num_rdma_bytes is not None
-        
+
         kwargs = dict(
             group=self.cpu_group,
             num_nvl_bytes=num_nvl_bytes,
@@ -653,7 +663,8 @@ class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
     # UCCL EP LL uses RDMA so no SMs are used for communication
     def max_sms_used(self) -> int | None:
         return 0
-    
+
+
 class NixlEPAll2AllManager(All2AllManagerBase):
     """
     All2All communication based on NIXL EP kernels.

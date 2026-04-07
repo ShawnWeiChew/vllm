@@ -32,11 +32,15 @@ from ...utils import multi_gpu_test
 from .parallel_utils import ProcessGroupInfo, parallel_launch
 
 if has_uccl_ep():
-    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ht import UCCLEPHTPrepareAndFinalize
-    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ll import UCCLEPLLPrepareAndFinalize
-    
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ht import (
+        UCCLEPHTPrepareAndFinalize,
+    )
+    from vllm.model_executor.layers.fused_moe.prepare_finalize.ucclep_ll import (
+        UCCLEPLLPrepareAndFinalize,
+    )
+
     from .parallel_utils import UCCLEPHTArgs, UCCLEPLLArgs, make_ucclep_a2a
-    
+
 requires_uccl_ep = pytest.mark.skipif(
     not has_uccl_ep(),
     reason="Requires uccl ep kernels",
@@ -75,6 +79,7 @@ def make_weights(
             w2[expert], use_per_token_if_dynamic=True
         )
     return w1_q, w2_q, w1_scale, w2_scale
+
 
 @dataclasses.dataclass
 class TestConfig:
@@ -117,6 +122,7 @@ class TestTensors:
             topk_weights=topk_weights,
             config=config,
         )
+
 
 def make_modular_kernel(
     pg: ProcessGroup,
@@ -180,6 +186,7 @@ def make_modular_kernel(
         inplace=False,
     )
     return mk
+
 
 def uccl_ep_moe_impl(
     pg: ProcessGroup,
@@ -281,6 +288,7 @@ def uccl_ep_moe_impl(
 
     return out_hidden_states
 
+
 def torch_moe_impl(
     test_tensors: TestTensors,
     w1: torch.Tensor,
@@ -335,6 +343,7 @@ def torch_moe_impl(
         out = out.to(dtype=a_dtype)
 
     return out
+
 
 def _uccl_ep_moe(
     pgi: ProcessGroupInfo,

@@ -1,10 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from collections.abc import Callable
 
-import uccl.ep
 import torch
+import uccl.ep
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
-from vllm import envs
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
@@ -29,6 +30,7 @@ UCCL_EP_QUANT_BLOCK_SHAPE = [UCCL_EP_QUANT_BLOCK_SIZE, UCCL_EP_QUANT_BLOCK_SIZE]
 
 logger = init_logger(__name__)
 
+
 def dequant_fp8(
     expert_x_fp8: torch.Tensor, expert_x_scales: torch.Tensor
 ) -> torch.Tensor:
@@ -46,10 +48,12 @@ def dequant_fp8(
     expert_x_scales = expert_x_scales.view(num_experts, -1, 1)
     return (expert_x_fp32 * expert_x_scales).view(expert_x_fp8.size())
 
+
 class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
     """
     Prepare/Finalize using UCCL EP low-latency kernels
     """
+
     SUPPORTED_HIDDEN_SIZES = [2048, 2560, 3072, 4096, 5120, 6144, 7168, 8192]
 
     @staticmethod
@@ -228,9 +232,7 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 "DeepEP kernels quantize the inputs in blocks of shape 128"
             )
 
-        qc_a1_gscale_or_scale = (
-            quant_config.a1_gscale if nvfp4_dispatch else quant_config.a1_scale
-        )
+        qc_a1_gscale_or_scale = quant_config.a1_scale
         has_per_token_scales = (
             qc_a1_gscale_or_scale.numel() != 1
             if qc_a1_gscale_or_scale is not None
