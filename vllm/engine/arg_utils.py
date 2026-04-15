@@ -1882,6 +1882,7 @@ class EngineArgs:
             numa_bind=self.numa_bind,
             numa_bind_nodes=self.numa_bind_nodes,
             numa_bind_cpus=self.numa_bind_cpus,
+            ucclep_config=self.ucclep_config,
         )
 
         speculative_config = self.create_speculative_config(
