@@ -6,9 +6,7 @@ from typing import Any
 import torch
 
 from vllm.config import get_current_vllm_config
-from vllm.distributed import (
-    get_ep_group,
-)
+from vllm.distributed import get_ep_group
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.config import (
     FusedMoEConfig,
@@ -29,7 +27,7 @@ from vllm.model_executor.layers.fused_moe.prepare_finalize.flashinfer_nvlink_two
     FlashInferNVLinkTwoSidedPrepareAndFinalize,
 )
 from vllm.platforms import current_platform
-from vllm.utils.import_utils import has_deep_ep, has_mori, has_nixl_ep
+from vllm.utils.import_utils import has_deep_ep, has_mori, has_nixl_ep, has_uccl_ep
 
 logger = init_logger(__name__)
 
@@ -47,6 +45,8 @@ if current_platform.is_cuda_alike():
             NIXL_EP_QUANT_BLOCK_SHAPE,
             NixlEPPrepareAndFinalize,
         )
+    if has_uccl_ep():
+        from .prepare_finalize.ucclep_ht import UCCLEPHTPrepareAndFinalize
 
 
 def maybe_roundup_layer_hidden_size(
@@ -178,6 +178,19 @@ def maybe_make_prepare_finalize(
             physical_to_global=physical_to_global,
             local_expert_global_ids=local_expert_global_ids,
         )
+
+    elif moe.use_ucclep_ht_kernels:
+        assert moe.dp_size == all2all_manager.dp_world_size
+
+        all_to_all_args: dict[str, Any] = dict()  # type: ignore[no-redef]
+        handle = all2all_manager.get_handle(all_to_all_args)
+        prepare_finalize = UCCLEPHTPrepareAndFinalize(
+            handle,
+            num_dispatchers=all2all_manager.world_size,
+            dp_size=all2all_manager.dp_world_size,
+            rank_expert_offset=all2all_manager.rank * moe.num_local_experts,
+        )
+
     elif moe.use_mori_kernels:
         assert quant_config is not None
 

@@ -509,24 +509,20 @@ class UCCLEPHTAll2AllManager(UCCLEPAll2AllManagerBase):
         # try to dynamically extract the state of the current model to
         # preserve the same function signature
 
-        import uccl.ep
+        import uccl_ep
 
         from vllm.config import get_current_vllm_config
 
-        num_max_nvl_chunked_send_tokens = 8
-        num_max_nvl_chunked_recv_tokens = 512
-        num_max_rdma_chunked_send_tokens = 16
-        num_max_rdma_chunked_recv_tokens = 512
+        ucclep_config = get_current_vllm_config().parallel_config.ucclep_config
 
-        config = uccl.ep.Config(
+        config = uccl_ep.Config(
             self.num_sms,
-            num_max_nvl_chunked_send_tokens,
-            num_max_nvl_chunked_recv_tokens,
-            num_max_rdma_chunked_send_tokens,
-            num_max_rdma_chunked_recv_tokens,
+            ucclep_config.num_max_nvl_chunked_send_tokens,
+            ucclep_config.num_max_nvl_chunked_recv_tokens,
+            ucclep_config.num_max_rdma_chunked_send_tokens,
+            ucclep_config.num_max_rdma_chunked_recv_tokens,
         )
 
-        # TODO(Shawn): these settings are currently configured for UCCL EP internode
         num_rdma_bytes = 0
         num_qps_per_rank = 1
         is_intranode = True
@@ -563,24 +559,24 @@ class UCCLEPHTAll2AllManager(UCCLEPAll2AllManagerBase):
             "args are computed in the Manager itself."
         )
 
-        import uccl.ep  # type: ignore[import-not-found]
+        import uccl_ep  # type: ignore[import-not-found]
 
         buffer_kwargs = self._make_all2all_kwargs()
         logger.debug("UCCL EP all2all args %s", buffer_kwargs)
-        handle: uccl.ep.Buffer = self.handle_cache.get_or_create(
-            buffer_kwargs, uccl.ep.Buffer
+        handle: uccl_ep.Buffer = self.handle_cache.get_or_create(
+            buffer_kwargs, uccl_ep.Buffer
         )
         return handle
 
     def set_num_sms(self, num_sms: int):
-        import uccl.ep  # type: ignore[import-not-found]
+        import uccl_ep  # type: ignore[import-not-found]
 
         # Right now the buffers are sized for only what the kernels were
         # created with. So we can only reduce the number of SMS used
         # but not increase it.
         if num_sms > self.num_sms:
             num_sms = self.num_sms
-        uccl.ep.Buffer.set_num_sms(num_sms)
+        uccl_ep.Buffer.set_num_sms(num_sms)
 
 
 class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
@@ -607,11 +603,11 @@ class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
         num_global_experts: Number of experts in the model.
         num_local_experts: Number of experts in an EP rank.
         """
-        import uccl.ep  # type: ignore[import-not-found]
+        import uccl_ep  # type: ignore[import-not-found]
 
         # TODO: Check configuration
         num_qps_per_rank = num_local_experts
-        num_rdma_bytes = uccl.ep.Buffer.get_low_latency_rdma_size_hint(
+        num_rdma_bytes = uccl_ep.Buffer.get_low_latency_rdma_size_hint(
             num_max_dispatch_tokens_per_rank=max_num_tokens_per_dp_rank,
             hidden=token_hidden_size,
             num_ranks=num_ep_ranks,
@@ -637,12 +633,12 @@ class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
         The kwargs for UCCLEPLLAll2AllManager is dictated by
         _make_all2all_kwargs.
         """
-        import uccl.ep  # type: ignore[import-not-found]
+        import uccl_ep  # type: ignore[import-not-found]
 
         buffer_kwargs = self._make_all2all_kwargs(**kwargs)
         logger.debug("UCCL EP all2all args %s", buffer_kwargs)
-        handle: uccl.ep.Buffer = self.handle_cache.get_or_create(
-            buffer_kwargs, uccl.ep.Buffer
+        handle: uccl_ep.Buffer = self.handle_cache.get_or_create(
+            buffer_kwargs, uccl_ep.Buffer
         )
         return handle
 

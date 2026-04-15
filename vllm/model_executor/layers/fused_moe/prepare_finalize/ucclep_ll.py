@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 import torch
-import uccl.ep
+import uccl_ep
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.logger import init_logger
@@ -78,7 +78,7 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def __init__(
         self,
-        buffer: uccl.ep.Buffer,
+        buffer: uccl_ep.Buffer,
         max_tokens_per_rank: int,
         num_dispatchers: int,
         use_fp8_dispatch: bool = False,
@@ -176,7 +176,9 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         assert isinstance(x, (torch.Tensor, tuple))
         q_dtype = quant_config.quant_dtype
 
-        # NOTE: removed mentions of nvfp4 support as UCCL does not support it for now
+        if q_dtype == "nvfp4":
+            logger.warning_once("UCCLEPLLPrepareAndFinalize does not support nvfp4")
+
         assert isinstance(x, torch.Tensor)
         num_experts, max_tokens, hidden_dim = x.size()
 
@@ -229,6 +231,9 @@ class UCCLEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
             assert hidden_size % 128 == 0, (
                 "UCCL EP kernels quantize the inputs in blocks of shape 128"
             )
+
+        if quant_config.quant_dtype == "nvfp4":
+            logger.warning_once("UCCLEPLLPrepareAndFinalize does not support nvfp4")
 
         qc_a1_gscale_or_scale = quant_config.a1_scale
         has_per_token_scales = (

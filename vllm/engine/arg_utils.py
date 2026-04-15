@@ -58,6 +58,7 @@ from vllm.config import (
     SchedulerConfig,
     SpeculativeConfig,
     StructuredOutputsConfig,
+    UCCLEPConfig,
     UVAOffloadConfig,
     VllmConfig,
     WeightTransferConfig,
@@ -455,6 +456,7 @@ class EngineArgs:
     )
     _api_process_count: int = ParallelConfig._api_process_count
     _api_process_rank: int = ParallelConfig._api_process_rank
+    ucclep_config: UCCLEPConfig | None = None
     max_parallel_loading_workers: int | None = (
         ParallelConfig.max_parallel_loading_workers
     )
@@ -672,6 +674,8 @@ class EngineArgs:
             )
         if isinstance(self.ir_op_priority, dict):
             self.ir_op_priority = IrOpPriorityConfig(**self.ir_op_priority)
+        if isinstance(self.ucclep_config, dict):
+            self.ucclep_config = UCCLEPConfig(**self.ucclep_config)
 
         from vllm.config.quantization import resolve_online_quant_config
 
@@ -1023,6 +1027,9 @@ class EngineArgs:
         parallel_group.add_argument("--worker-cls", **parallel_kwargs["worker_cls"])
         parallel_group.add_argument(
             "--worker-extension-cls", **parallel_kwargs["worker_extension_cls"]
+        )
+        parallel_group.add_argument(
+            "--ucclep-config", **parallel_kwargs["ucclep_config"]
         )
 
         # KV cache arguments

@@ -233,12 +233,12 @@ def make_ucclep_ht_a2a(
     q_dtype: torch.dtype | None = None,
     block_shape: list[int] | None = None,
 ):
-    import uccl.ep
+    import uccl_ep
 
     # high throughput a2a
     num_nvl_bytes = 1024 * 1024 * 1024  # 1GB
     num_rdma_bytes, low_latency_mode, num_qps_per_rank = 0, False, 1
-    buffer = uccl.ep.Buffer(
+    buffer = uccl_ep.Buffer(
         group=pg,
         num_nvl_bytes=num_nvl_bytes,
         num_rdma_bytes=num_rdma_bytes,
@@ -260,17 +260,17 @@ def make_ucclep_ll_a2a(
     q_dtype: torch.dtype | None = None,
     block_shape: list[int] | None = None,
 ):
-    import uccl.ep
+    import uccl_ep
 
     # low-latency a2a
-    num_rdma_bytes = uccl.ep.Buffer.get_low_latency_rdma_size_hint(
+    num_rdma_bytes = uccl_ep.Buffer.get_low_latency_rdma_size_hint(
         ucclep_ll_args.max_tokens_per_rank,
         ucclep_ll_args.hidden_size,
         pgi.world_size,
         ucclep_ll_args.num_experts,
     )
 
-    buffer = uccl.ep.Buffer(
+    buffer = uccl_ep.Buffer(
         group=pg,
         num_rdma_bytes=num_rdma_bytes,
         low_latency_mode=True,
