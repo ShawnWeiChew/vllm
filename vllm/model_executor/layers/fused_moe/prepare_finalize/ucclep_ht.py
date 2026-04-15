@@ -3,9 +3,10 @@
 from collections.abc import Callable
 
 import torch
-import uccl.ep
+import uccl_ep
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
+from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
     TopKWeightAndReduceContiguous,
@@ -23,6 +24,8 @@ from vllm.v1.worker.ubatching import (
     dbo_yield_and_switch_from_comm_to_compute,
     dbo_yield_and_switch_from_compute_to_comm,
 )
+
+logger = init_logger(__name__)
 
 
 class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
@@ -48,7 +51,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def __init__(
         self,
-        buffer: uccl.ep.Buffer,
+        buffer: uccl_ep.Buffer,
         num_dispatchers: int,
         dp_size: int,
         rank_expert_offset: int,
@@ -84,15 +87,15 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
     def topk_indices_dtype(self) -> torch.dtype | None:
         return torch.int64
 
-    def _get_dispatch_config(self) -> uccl.ep.Config | None:
+    def _get_dispatch_config(self) -> uccl_ep.Config | None:
         if self.num_dispatchers_ not in self.available_rank_configs:
             return None
-        return uccl.ep.Buffer.get_dispatch_config(self.num_dispatchers_)
+        return uccl_ep.Buffer.get_dispatch_config(self.num_dispatchers_)
 
-    def _get_combine_config(self) -> uccl.ep.Config | None:
+    def _get_combine_config(self) -> uccl_ep.Config | None:
         if self.num_dispatchers_ not in self.available_rank_configs:
             return None
-        return uccl.ep.Buffer.get_combine_config(self.num_dispatchers_)
+        return uccl_ep.Buffer.get_combine_config(self.num_dispatchers_)
 
     def _do_dispatch(
         self,
@@ -182,7 +185,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
 
     def _receiver(
         self,
-        event: uccl.ep.EventOverlap,
+        event: uccl_ep.EventOverlap,
         has_scales: bool,
         token_data: tuple[torch.Tensor, torch.Tensor] | torch.Tensor,
         expert_topk_ids: torch.Tensor | None,
@@ -275,11 +278,7 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
             )
             a1 = a1 * topk_weights.to(a1.dtype)
 
-        # * UCCL EP only supports fp8 block scales so quantize
-        #   before the dispatch for these models.
-        # * For all other quantization, dispatch after.
-        # * For expert kernels that require unquantized inputs,
-        #   defer quantization to FusedMoEExpertsPermuteUnpermute.
+        # * Similar to DeepEP, UCCL EP only supports fp8 block scales
         if quant_config.is_block_quantized and not defer_input_quant:
             a1q, a1q_scale = moe_kernel_quantize_input(
                 a1,
@@ -292,6 +291,8 @@ class UCCLEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 a1q_scale = a1q_scale.view(1, 1)
             a1_post_scale = None
         else:
+            if quant_config.quant_dtype == "nvfp4":
+                logger.warning_once("UCCLEPHTPrepareAndFinalize does not support nvfp4")
             a1q = a1
             a1q_scale = None
             a1_post_scale = quant_config.a1_scale

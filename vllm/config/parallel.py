@@ -107,6 +107,71 @@ class EPLBConfig:
 
 
 @config
+class UCCLEPConfig:
+    """Configuration specific to UCCLEP"""
+
+    num_sms: int = 20
+    """Number of SMs to use for kernels"""
+    num_max_nvl_chunked_send_tokens: int = 16
+    """Max number of chunked tokens to send over NVLink"""
+    num_max_nvl_chunked_recv_tokens: int = 512
+    """Max number of chunked tokens to receive over NVLink"""
+    num_max_rdma_chunked_send_tokens: int = 16
+    """Max number of chunked tokens to send over RDMA"""
+    num_max_rdma_chunked_recv_tokens: int = 512
+    """Max number of chunked tokens to receive over RDMA"""
+
+    @model_validator(mode="after")
+    def _validate_uccl_ep_config(self) -> Self:
+        if self.num_sms < 0:
+            raise ValueError("UCCLEP num_sms must be > 0.")
+        if not (
+            self.num_max_nvl_chunked_send_tokens > 0
+            and self.num_max_nvl_chunked_recv_tokens > 0
+        ):
+            raise ValueError(
+                "UCCLEP num_max_nvl_chunked_send_tokens and "
+                "self.num_max_nvl_chunked_recv_tokens must be greater than 0."
+            )
+        if (
+            not self.num_max_nvl_chunked_send_tokens
+            < self.num_max_nvl_chunked_recv_tokens
+        ):
+            raise ValueError(
+                "UCCLEP num_max_nvl_chunked_send_tokens must be less than"
+                "self.num_max_nvl_chunked_recv_tokens."
+            )
+        if not (
+            self.num_max_rdma_chunked_send_tokens > 0
+            and self.num_max_rdma_chunked_recv_tokens > 0
+        ):
+            raise ValueError(
+                "UCCLEP num_max_rdma_chunked_send_tokens and"
+                "num_max_rdma_chunked_recv_tokens must be greater than 0."
+            )
+        if (
+            not self.num_max_rdma_chunked_send_tokens
+            < self.num_max_rdma_chunked_recv_tokens
+        ):
+            raise ValueError(
+                "UCCLEP num_max_rdma_chunked_send_tokens must be less than"
+                "num_max_rdma_chunked_recv_tokens."
+            )
+        # https://github.com/uccl-project/uccl/blob/main/ep/include/ep_config.hpp#L54
+        # this assertion is related to RDMA lazy head update, we must ensure that
+        # senders always have space to push
+        if (
+            not self.num_max_nvl_chunked_send_tokens
+            <= self.num_max_nvl_chunked_recv_tokens / 2
+        ):
+            raise ValueError(
+                "UCCLEP num_max_nvl_chunked_send_tokens must be <="
+                "num_max_nvl_chunked_recv_tokens / 2."
+            )
+        return self
+
+
+@config
 class ParallelConfig:
     """Configuration for the distributed execution."""
 
@@ -177,6 +242,8 @@ class ParallelConfig:
     - "allgather_reducescatter": All2all based on allgather and reducescatter
     - "deepep_high_throughput": Use deepep high-throughput kernels
     - "deepep_low_latency": Use deepep low-latency kernels
+    - "ucclep_high_throughput": Use ucclep high-throughput kernels
+    - "ucclep_low_latency": Use ucclep low-latency kernels
     - "mori": Use mori kernels
     - "nixl_ep": Use nixl-ep kernels
     - "flashinfer_nvlink_two_sided": Use flashinfer two-sided kernels for mnnvl
@@ -365,6 +432,9 @@ class ParallelConfig:
         should only be set by API server scale-out.
     """
 
+    ucclep_config: UCCLEPConfig | None = None
+    """UCCL EP configuration"""
+
     @field_validator("disable_nccl_for_dp_synchronization", mode="wrap")
     @classmethod
     def _skip_none_validation(cls, value: Any, handler: Callable) -> Any:
@@ -481,6 +551,17 @@ class ParallelConfig:
             raise ValueError(
                 "dcp_comm_backend='a2a' requires decode_context_parallel_size > 1."
             )
+
+        if self.all2all_backend == "ucclep_high_throughput":
+            if self.ucclep_config is None:
+                self.ucclep_config = UCCLEPConfig()
+        else:
+            if self.ucclep_config is not None:
+                raise ValueError(
+                    "ucclep_config is set but all2all_backend is not "
+                    "ucclep_high_throughput. Either set --all2all-backend"
+                    "ucclep_high_throughput or remove --ucclep-config."
+                )
 
         return self
 
