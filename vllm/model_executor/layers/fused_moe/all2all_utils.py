@@ -47,7 +47,10 @@ if current_platform.is_cuda_alike():
         )
     if has_uccl_ep():
         from .prepare_finalize.ucclep_ht import UCCLEPHTPrepareAndFinalize
-        from .prepare_finalize.ucclep_ll import UCCLEPLLPrepareAndFinalize
+        from .prepare_finalize.ucclep_ll import (
+            UCCL_EP_QUANT_BLOCK_SHAPE,
+            UCCLEPLLPrepareAndFinalize,
+        )
 
 
 def maybe_roundup_layer_hidden_size(
@@ -214,7 +217,7 @@ def maybe_make_prepare_finalize(
         # data movement.
         use_fp8_dispatch = (
             quant_config.quant_dtype == current_platform.fp8_dtype()
-            and quant_config.block_shape == DEEPEP_QUANT_BLOCK_SHAPE
+            and quant_config.block_shape == UCCL_EP_QUANT_BLOCK_SHAPE
         )
 
         prepare_finalize = UCCLEPLLPrepareAndFinalize(
