@@ -605,7 +605,6 @@ class UCCLEPLLAll2AllManager(UCCLEPAll2AllManagerBase):
         """
         import uccl_ep  # type: ignore[import-not-found]
 
-        # TODO: Check configuration
         num_qps_per_rank = num_local_experts
         num_rdma_bytes = uccl_ep.Buffer.get_low_latency_rdma_size_hint(
             num_max_dispatch_tokens_per_rank=max_num_tokens_per_dp_rank,

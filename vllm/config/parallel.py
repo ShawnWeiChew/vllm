@@ -718,6 +718,7 @@ class ParallelConfig:
             self.all2all_backend
             in (
                 "deepep_low_latency",
+                "ucclep_low_latency",
                 "nixl_ep",
             )
             and self.enable_expert_parallel

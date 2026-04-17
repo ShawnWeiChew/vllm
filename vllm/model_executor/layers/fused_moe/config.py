@@ -1001,7 +1001,7 @@ class FusedMoEParallelConfig:
 
     @property
     def use_batched_activation_format(self):
-        return self.use_deepep_ll_kernels
+        return self.use_deepep_ll_kernels or self.use_ucclep_ll_kernels
 
     @property
     def use_ag_rs_all2all_kernels(self):
