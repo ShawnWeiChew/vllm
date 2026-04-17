@@ -450,9 +450,9 @@ class UCCLEPAll2AllManagerBase(All2AllManagerBase):
         super().__init__(cpu_group, tcp_store_group)
         self.handle_cache = Cache()
 
-        # TODO(Shawn): Based on the testing configuration,
-        # there should be 24 SMs, not 20
-        self.num_sms = 20
+        from vllm.config import get_current_vllm_config
+
+        self.num_sms = get_current_vllm_config().parallel_config.ucclep_config.num_sms
 
     def get_handle(self, kwargs):
         raise NotImplementedError

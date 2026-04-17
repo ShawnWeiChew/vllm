@@ -552,7 +552,11 @@ class ParallelConfig:
                 "dcp_comm_backend='a2a' requires decode_context_parallel_size > 1."
             )
 
-        if self.all2all_backend == "ucclep_high_throughput":
+        # uccl ll only makes use of the num_sms parameter
+        if (
+            self.all2all_backend == "ucclep_high_throughput"
+            or self.all2all_backend == "ucclep_low_latency"
+        ):
             if self.ucclep_config is None:
                 self.ucclep_config = UCCLEPConfig()
         else:
