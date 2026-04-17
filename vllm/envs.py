@@ -1588,6 +1588,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL": lambda: bool(
         int(os.getenv("VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL", "0"))
     ),
+    # Allow UCCLEP to use MNNVL (multi-node nvlink) for internode_ll kernel,
+    # turn this for better latency on GB200 like system
+    "VLLM_UCCLEP_LOW_LATENCY_USE_MNNVL": lambda: bool(
+        int(os.getenv("VLLM_UCCLEP_LOW_LATENCY_USE_MNNVL", "0"))
+    ),
     # The number of SMs to allocate for communication kernels when running DBO
     # the rest of the SMs on the device will be allocated to compute
     "VLLM_DBO_COMM_SMS": lambda: int(os.getenv("VLLM_DBO_COMM_SMS", "20")),
